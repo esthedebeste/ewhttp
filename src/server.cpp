@@ -2,7 +2,6 @@
 #include <ewhttp/server.h>
 #include <iostream>
 #include <llhttp.h>
-#include <print>
 
 asio::awaitable<void> ewhttp::Server::respond(asio::ip::tcp::socket socket_param) {
 	llhttp_t parser;
@@ -49,7 +48,6 @@ asio::awaitable<void> ewhttp::Server::respond(asio::ip::tcp::socket socket_param
 			locals.request.method = *method;
 			locals.method.clear();
 		} else {
-			std::println(std::cerr, "Unknown method: {}", locals.method);
 			locals.method.clear();
 			return 1;
 		}
@@ -87,7 +85,6 @@ asio::awaitable<void> ewhttp::Server::respond(asio::ip::tcp::socket socket_param
 		} else if (result == HPE_PAUSED_UPGRADE) {
 			llhttp_resume_after_upgrade(&parser); // ignore upgrade
 		} else if (result != HPE_PAUSED) {
-			std::println(std::cerr, "Error parsing request: {}", llhttp_errno_name(result));
 			break;
 		}
 	}
@@ -104,7 +101,7 @@ asio::awaitable<void> ewhttp::Server::respond(asio::ip::tcp::socket socket_param
 }
 
 namespace ewhttp {
-	void Server::accept(const asio::ip::address &host, const uint16_t port) {
+	void Server::run(const asio::ip::address &host, const uint16_t port) {
 		auto executor = io_executor = asio::require(io_context.get_executor(), asio::execution::outstanding_work_t::tracked);
 		co_spawn(
 				io_context,
@@ -119,8 +116,8 @@ namespace ewhttp {
 
 		io_context.run();
 	}
-	void Server::accept(const std::string_view host, const uint16_t port) {
-		accept(asio::ip::make_address(host), port);
+	void Server::run(const std::string_view host, const uint16_t port) {
+		run(asio::ip::make_address(host), port);
 	}
 
 	void Server::force_stop() {

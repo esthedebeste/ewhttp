@@ -2,13 +2,14 @@
 #include "./method.h"
 
 #include <asio.hpp>
-#include <span>
-#include <string_view>
+#include <optional>
 #include <vector>
 
 namespace ewhttp {
 	template<class T = void>
 	using awaitable = asio::awaitable<T>;
+	template<class T = void>
+	using awaitopt = asio::awaitable<std::optional<T>>;
 	using async = asio::awaitable<void>;
 
 	class Server;

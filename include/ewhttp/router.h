@@ -3,8 +3,11 @@
 #include "./response.h"
 
 #include <asio/awaitable.hpp>
+#include <concepts>
 #include <optional>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -27,7 +30,7 @@ namespace ewhttp {
 
 		template<class Tuple>
 		concept tuple_like = requires(Tuple t) {
-			static_cast<std::size_t>(std::tuple_size_v<Tuple>);
+			static_cast<size_t>(std::tuple_size_v<Tuple>);
 		} && (std::tuple_size_v<Tuple> == 0 || requires(Tuple t) {
 								 static_cast<typename std::tuple_element_t<0, Tuple>>(std::get<0>(t));
 							 });
@@ -49,11 +52,11 @@ namespace ewhttp {
 		struct IndexOf;
 		template<auto C>
 		struct IndexOf<C, std::tuple<>> {
-			static constexpr std::size_t value = 0;
+			static constexpr size_t value = 0;
 		};
 		template<auto C, class E, class... Types>
 		struct IndexOf<C, std::tuple<E, Types...>> {
-			static constexpr std::size_t value = C.template operator()<E>() ? 0 : 1 + IndexOf<C, std::tuple<Types...>>::value;
+			static constexpr size_t value = C.template operator()<E>() ? 0 : 1 + IndexOf<C, std::tuple<Types...>>::value;
 		};
 
 		template<class T>
@@ -103,7 +106,7 @@ namespace ewhttp {
 		h(path);
 	} || detail::path_parser_non_early_awaitable<H>;
 	template<class H>
-	concept optional_path_parser = path_parser<H> || std::is_same_v<H, std::monostate>;
+	concept optional_path_parser = path_parser<H> || std::is_same_v<H, std::nullopt_t>;
 
 	namespace build {
 		template<class P>
@@ -279,7 +282,7 @@ namespace ewhttp {
 			{ t(request, response, path_progress, parts...) } -> std::same_as<async>;
 		};
 		template<class R, class P, class... Parts>
-		concept optional_parser_router = std::is_same_v<R, std::monostate> || std::is_same_v<P, std::monostate> || router<R, Parts..., typename PathParserReturn<P>::type>;
+		concept optional_parser_router = std::is_same_v<R, std::nullopt_t> || std::is_same_v<P, std::nullopt_t> || router<R, Parts..., typename PathParserReturn<P>::type>;
 
 		// std::pair<std::string_view, router>
 		template<class N, class... Parts>
@@ -468,7 +471,7 @@ namespace ewhttp {
 				co_return false; // continue iterating
 			});
 			if (response.body_sent) co_return;
-			if constexpr (std::is_same_v<PathParser, std::monostate>) {
+			if constexpr (std::is_same_v<PathParser, std::nullopt_t>) {
 			} else if constexpr (path_parser_with_early<PathParser>) {
 				if (auto result = co_await detail::to_awaitable(parser(path_part, request, response)); result.has_value())
 					co_await parser_next(request, response, slash + 1, parts..., result.value());
@@ -502,7 +505,7 @@ namespace ewhttp {
 				return std::make_pair(parser_router.parser, create_router<PrevParsedParts..., typename detail::PathParserReturn<typename pr_t::parser_type>::type>(parser_router.routes));
 			} else {
 				// no path parser alternative
-				return std::make_pair(std::monostate{}, std::monostate{});
+				return std::make_pair(std::nullopt, std::nullopt);
 			}
 		}();
 		using parser_t = decltype(parser);
@@ -523,19 +526,12 @@ namespace ewhttp {
 			return std::make_pair(pair.name, create_router<PrevParsedParts...>(pair.routes));
 		});
 		using named_t = decltype(named);
-		//static_assert(detail::Count<EWHTTP_CONCEPT_LAMBDA(build::name_c), decltype(named)>::value == std::tuple_size_v<decltype(named)>);
 		static_assert(detail::named_router_tuple<named_t, PrevParsedParts...>);
-		//return std::tuple_cat(std::conditional_t<(std::is_same_v<std::tuple_element_t<0, T>, std::string_view>),
-		//										 std::tuple<std::pair<std::tuple_element_t<0, T>, std::tuple_element_t<0, T>>>,
-		//										 std::tuple<>>{}...);;
 		auto method = detail::filter_map<EWHTTP_CONCEPT_LAMBDA(build::handler_c)>(router.routes, []<class H>(build::Handler<H> handler) {
 			return std::make_pair(handler.method, handler.handler);
 		});
 		using method_t = decltype(method);
 		static_assert(detail::method_handler_tuple<method_t, std::tuple<PrevParsedParts...>>);
-		//return std::tuple_cat(std::conditional_t<(std::is_same_v<std::tuple_element_t<0, T>, Method>),
-		//										 std::tuple<T>,
-		//										 std::tuple<>>{}...);
 
 		return Router<parser_t, parsed_router_t, always_t, named_t, method_t, fallback_t, PrevParsedParts...>(parser, parsed_router, always, named, method, fallback);
 	}

@@ -1,11 +1,11 @@
 #include <ewhttp/ewhttp.h>
-#include <iostream>
 
 int main() {
 	using namespace std::literals;
 	using namespace ewhttp::build::underscore;
 	using ewhttp::async;
 	using ewhttp::awaitable;
+	using ewhttp::awaitopt;
 	using ewhttp::Req;
 	using ewhttp::Res;
 
@@ -21,18 +21,19 @@ int main() {
 				co_await response.send_body(std::format("404 Not Found '{}' :P", request.path));
 			}),
 			GET([](Req request, Res response) -> async {
-				co_await response.send_body(std::format("Welcome to the test! You visited {}", request.path));
+				co_await response.send_body(std::format("Welcome to the test server for <a href=\"https://github.com/esthedebeste/ewhttp/\">ewhttp</a>! You visited {}", request.path));
 			}),
 			_("other",
 			  _("nested", GET([](Req request, Res response) -> async {
 					co_await response.send_body(std::format("You got a little deeper! You visited {}", request.path));
 				}))),
 			_("number",
-			  _([](const std::string_view str, Req request, Res response) -> awaitable<std::optional<int>> {
+			  _([](const std::string_view str, Req request, Res response) -> awaitopt<int> {
 				  int n;
-				  if (const auto result = std::from_chars(str.data(), str.data() + str.size(), n); result.ec == std::errc{})
+				  const auto result = std::from_chars(str.data(), str.data() + str.size(), n);
+				  if (result.ec == std::errc{})
 					  co_return std::make_optional(n);
-				  co_await response.send_body("Invalid number");
+				  co_await response.send_body(std::format("Invalid number '{}': {}", str, std::make_error_code(result.ec).message()));
 				  co_return std::nullopt;
 			  },
 				GET([](Req request, Res response, const int number) -> async {
@@ -45,6 +46,6 @@ int main() {
 					co_await response.send_body(std::format("Test: your name is {}", part));
 				}))));
 	ewhttp::Server server(router);
-	server.accept("127.0.0.1", 8080);
+	server.run("0.0.0.0", 80);
 	return 0;
 }

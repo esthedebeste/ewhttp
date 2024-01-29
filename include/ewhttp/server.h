@@ -23,17 +23,17 @@ namespace ewhttp {
 		~Server() = default;
 
 		/**
-		 * \brief Start the server on the given host and port.
+		 * \brief Run the server on the given host and port.
 		 * \param host The host to listen on.
 		 * \param port The port number to listen on.
 		 */
-		void accept(const asio::ip::address &host, uint16_t port);
+		void run(const asio::ip::address &host, uint16_t port);
 		/**
-		 * \brief Start the server on the given host and port.
+		 * \brief Run the server on the given host and port.
 		 * \param host Must be an IP string.
 		 * \param port The port number to listen on.
 		 */
-		void accept(std::string_view host, uint16_t port);
+		void run(std::string_view host, uint16_t port);
 		/**
 		 * \brief Rudely kill the server, not allowing it to finish operations.
 		 */
