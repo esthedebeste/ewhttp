@@ -2,6 +2,7 @@
 #include "./method.h"
 
 #include <asio.hpp>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -11,6 +12,7 @@ namespace ewhttp {
 	using async = asio::awaitable<void>;
 
 	class Server;
+	struct Response;
 	namespace detail {
 		struct RequestContext; // server.h
 	}
@@ -19,14 +21,13 @@ namespace ewhttp {
 		std::vector<std::pair<std::string, std::string>> headers{};
 		std::string path{};
 
-		asio::awaitable<void> reply(std::string body);
-
 	private:
 		detail::RequestContext *context;
 
 		Request(MethodT method, detail::RequestContext *context) : method{method}, context{context} {}
 		Request &operator=(const Request &) = default;
 		friend class Server;
+		friend struct Response;
 	};
 
 	using Req = Request &;

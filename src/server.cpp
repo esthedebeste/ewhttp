@@ -59,10 +59,11 @@ asio::awaitable<void> ewhttp::Server::respond(asio::ip::tcp::socket socket_param
 	settings.on_headers_complete = +[](llhttp_t *parser) {
 		auto &locals = *static_cast<RequestContext *>(parser->data);
 		asio::co_spawn(
-				locals.executor, [&]() -> awaitable<> {
+				locals.executor, [&]() -> async {
 					Request request = std::move(locals.request);
 					locals.request = Request{{255}, &locals};
-					co_await locals.callback(request);
+					Response response{locals};
+					co_await locals.callback(request, response);
 				},
 				asio::detached);
 		return 0;

@@ -1,5 +1,6 @@
 #pragma once
 #include "./request.h"
+#include "./response.h"
 
 #include <asio/awaitable.hpp>
 #include <optional>
@@ -19,8 +20,8 @@ namespace ewhttp {
 		struct HandlerVerifier;
 		template<class Handler, class... Parts>
 		struct HandlerVerifier<Handler, std::tuple<Parts...>> {
-			static constexpr bool value = requires(Handler h, Request &request, Parts... parts) {
-				h(request, parts...);
+			static constexpr bool value = requires(Handler h, Request &request, Response &response, Parts... parts) {
+				h(request, response, parts...);
 			};
 		};
 
@@ -54,16 +55,53 @@ namespace ewhttp {
 		struct IndexOf<C, std::tuple<E, Types...>> {
 			static constexpr std::size_t value = C.template operator()<E>() ? 0 : 1 + IndexOf<C, std::tuple<Types...>>::value;
 		};
+
+		template<class T>
+		struct IsAwaitable {
+			static constexpr bool value = false;
+		};
+		template<class T>
+		struct IsAwaitable<awaitable<T>> {
+			static constexpr bool value = true;
+		};
+
+		template<class T>
+		struct PossiblyCoAwaited {
+			using type = T;
+		};
+		template<class T>
+		struct PossiblyCoAwaited<awaitable<T>> {
+			using type = T;
+		};
+
+		template<class T>
+		concept is_awaitable = IsAwaitable<T>::value;
+
+		template<class Awaited>
+		concept awaits_to_std_optional = is_awaitable<Awaited> && std_optional<typename Awaited::value_type>;
+
+		template<class H>
+		concept path_parser_with_early_awaitable = requires(H h, std::string_view path, Request &request, Response &response) {
+			{ h(path, request, response) } -> awaits_to_std_optional;
+		};
+
+		template<class H>
+		concept path_parser_non_early_awaitable = requires(H h, std::string_view path) {
+			{ h(path) } -> is_awaitable;
+		};
+
+		template<class H>
+		concept path_parser_awaitable = path_parser_with_early_awaitable<H> || path_parser_non_early_awaitable<H>;
 	} // namespace detail
 
 	template<class H>
-	concept path_parser_with_early = requires(H h, std::string_view path, Request &request) {
-		{ h(path, request) } -> detail::std_optional;
-	};
+	concept path_parser_with_early = requires(H h, std::string_view path, Request &request, Response &response) {
+		{ h(path, request, response) } -> detail::std_optional;
+	} || detail::path_parser_with_early_awaitable<H>;
 	template<class H>
 	concept path_parser = path_parser_with_early<H> || requires(H h, std::string_view path) {
 		h(path);
-	};
+	} || detail::path_parser_non_early_awaitable<H>;
 	template<class H>
 	concept optional_path_parser = path_parser<H> || std::is_same_v<H, std::monostate>;
 
@@ -73,6 +111,16 @@ namespace ewhttp {
 			static_cast<typename P::parser_type>(p.parser);
 			static_cast<typename P::routes_type>(p.routes);
 		};
+		template<class A>
+		concept always_c = requires(A a) {
+			static_cast<typename A::handler_type>(a.handler);
+			A::is_always;
+		} && A::is_always;
+		template<class F>
+		concept fallback_c = requires(F f) {
+			static_cast<typename F::handler_type>(f.handler);
+			F::is_fallback;
+		} && F::is_fallback;
 		template<class N>
 		concept name_c = requires(N n) {
 			static_cast<std::string_view>(n.name);
@@ -84,7 +132,7 @@ namespace ewhttp {
 			static_cast<typename H::handler_type>(h.handler);
 		};
 		template<class R>
-		concept route_c = parser_c<R> || name_c<R> || handler_c<R>;
+		concept route_c = parser_c<R> || always_c<R> || fallback_c<R> || name_c<R> || handler_c<R>;
 		template<class R>
 		concept router_c = detail::tuple_like<typename R::routes_type> && detail::every<typename R::routes_type, EWHTTP_CONCEPT_LAMBDA(route_c)>;
 
@@ -113,6 +161,20 @@ namespace ewhttp {
 		};
 		template<route_c... Rs>
 		Name(const std::string_view, Rs...) -> Name<Rs...>;
+		template<class H>
+		struct Always {
+			static constexpr bool is_always = true;
+			using handler_type = H;
+			H handler;
+			explicit Always(H handler) : handler{handler} {}
+		};
+		template<class H>
+		struct Fallback {
+			static constexpr bool is_fallback = true;
+			using handler_type = H;
+			H handler;
+			explicit Fallback(H handler) : handler{handler} {}
+		};
 
 		template<class H>
 		struct Handler {
@@ -131,11 +193,10 @@ namespace ewhttp {
 			Handler<H> POST(H handler) { return Handler{Method::POST, handler}; }
 			template<class H>
 			Handler<H> PUT(H handler) { return Handler{Method::PUT, handler}; }
-#pragma push_macro("DELETE")
+// windows
 #undef DELETE
 			template<class H>
 			Handler<H> DELETE(H handler) { return Handler{Method::DELETE, handler}; }
-#pragma pop_macro("DELETE")
 			template<class H>
 			Handler<H> CONNECT(H handler) { return Handler{Method::CONNECT, handler}; }
 			template<class H>
@@ -164,6 +225,14 @@ namespace ewhttp {
 				return Name<R...>{name, routes...};
 			}
 			template<class H>
+			Always<H> operator()(H handler) const {
+				return Always<H>{handler};
+			}
+			template<class H>
+			Fallback<H> fallback(H handler) const {
+				return Fallback<H>{handler};
+			}
+			template<class H>
 			Handler<H> operator()(const MethodT &method, H handler) const {
 				return Handler<H>{method, handler};
 			}
@@ -182,37 +251,32 @@ namespace ewhttp {
 		std::enable_if_t<Value, T> static_assert_type_print() {
 			return std::declval<T>();
 		}
+		template<class T>
+		awaitable<T> to_awaitable(awaitable<T> awaitable) {
+			return awaitable;
+		}
+		template<class T>
+		awaitable<T> to_awaitable(T awaitable) {
+			co_return awaitable;
+		}
+
+
 		template<class H>
 		struct PathParserReturn;
 		template<class H>
 			requires path_parser_with_early<H>
 		struct PathParserReturn<H> {
-			using type = typename std::invoke_result_t<H, std::string_view, Request &>::value_type;
+			using type = typename PossiblyCoAwaited<std::invoke_result_t<H, std::string_view, Request &, Response &>>::type::value_type;
 		};
 		template<class H>
 			requires path_parser<H>
 		struct PathParserReturn<H> {
-			using type = std::invoke_result_t<H, std::string_view>;
+			using type = typename PossiblyCoAwaited<std::invoke_result_t<H, std::string_view>>::type;
 		};
 
-		//{
-		//	using type = path_parser_with_early<H> ? typename std::invoke_result_t<H, std::string_view, Request &>::value_type : std::invoke_result_t<H, std::string_view>;
-		//	//decltype([]() consteval {
-		//	//	if constexpr (path_parser_with_early<H>) {
-		//	//		static_assert_type_print<H>();
-		//	//		return std::declval<H>()(std::declval<std::string_view>(), std::declval<Request>()).value();
-		//	//		//return std::declval<typename std::invoke_result_t<H, std::string_view, Request &>::value_type>();
-		//	//	} else if constexpr (path_parser<H>) {
-		//	//		return std::declval<std::invoke_result_t<H, std::string_view>>();
-		//	//	} else {
-		//	//		static_assert_type_print<H, false>();
-		//	//	}
-		//	//}());
-		//};
-
 		template<class H, class... Parts>
-		concept router = requires(const H t, Request &request, size_t path_progress, Parts... parts) {
-			t(request, path_progress, parts...);
+		concept router = requires(const H t, Request &request, Response &response, size_t path_progress, Parts... parts) {
+			{ t(request, response, path_progress, parts...) } -> std::same_as<async>;
 		};
 		template<class R, class P, class... Parts>
 		concept optional_parser_router = std::is_same_v<R, std::monostate> || std::is_same_v<P, std::monostate> || router<R, Parts..., typename PathParserReturn<P>::type>;
@@ -237,7 +301,11 @@ namespace ewhttp {
 		} && handler<typename N::second_type, Parts>;
 		// std::tuple<method_handler...>
 		template<class Tuple, class Parts>
-		concept handler_tuple = every<Tuple, []<class T>() consteval { return method_handler<T, Parts>; }>;
+		concept method_handler_tuple = every<Tuple, []<class T>() consteval { return method_handler<T, Parts>; }>;
+
+		// std::tuple<handler...>
+		template<class Tuple, class Parts>
+		concept handler_tuple = every<Tuple, []<class T>() consteval { return handler<T, Parts>; }>;
 
 		/**
 		 * \brief Iterate over a tuple.
@@ -246,15 +314,14 @@ namespace ewhttp {
 		 * \return `true` if callback broke, `false` if continued past the end
 		 */
 		template<class... Elements>
-		asio::awaitable<bool> for_each_awaitable(const std::tuple<Elements...> tuple, auto callback) {
-			co_return co_await std::apply([callback]<class... T>(T &&...element) -> asio::awaitable<bool> {
+		async for_each_awaitable(const std::tuple<Elements...> tuple, auto callback) {
+			co_await std::apply([callback]<class... T>(T &&...element) -> async {
 				bool done = false;
 				((done || ((done = co_await callback(element)))), ...);
-
 				// optimizer should convert a series of `if(!done)`s to early returns instead of constantly reevaluating the same condition. also these lambdas should all be inlined later.
-				co_return done;
 			},
-										  tuple);
+								tuple);
+			co_return;
 		}
 
 		template<typename T>
@@ -337,67 +404,87 @@ namespace ewhttp {
 											  if constexpr (build::name_c<T>)
 												  if constexpr (RoutesVerifier<typename T::routes_type, Parts>::value)
 													  return 1;
-											  if constexpr (build::handler_c<T>)
+											  if constexpr (build::handler_c<T> || build::always_c<T> || build::fallback_c<T>)
 												  if constexpr (handler<typename T::handler_type, Parts>)
 													  return 1;
 											  return 0;
 										  }> &&
 										  detail::Count<EWHTTP_CONCEPT_LAMBDA(build::parser_c), std::tuple<R...>>::value <= 1; // must have none or one path parser
 		};
-	}; // namespace detail
+	} // namespace detail
 
 	template<class Rs, class Parts>
 	concept routes = detail::RoutesVerifier<Rs, Parts>::value;
 
-	template<optional_path_parser PathParser, class PathParserNext, class Named, class Method, class... PreviouslyParsedParts>
-		requires detail::optional_parser_router<PathParserNext, PathParser, PreviouslyParsedParts...> && detail::named_router_tuple<Named, PreviouslyParsedParts...> && detail::handler_tuple<Method, std::tuple<PreviouslyParsedParts...>>
+	template<optional_path_parser PathParser, class PathParserNext, class Always, class Named, class Method, class Fallback, class... PreviouslyParsedParts>
+		requires detail::optional_parser_router<PathParserNext, PathParser, PreviouslyParsedParts...> && detail::handler_tuple<Always, std::tuple<PreviouslyParsedParts...>> && detail::handler_tuple<Fallback, std::tuple<PreviouslyParsedParts...>> && detail::named_router_tuple<Named, PreviouslyParsedParts...> && detail::method_handler_tuple<Method, std::tuple<PreviouslyParsedParts...>>
 	class Router {
 		PathParser parser;
 		PathParserNext parser_next;
+		Always always;
 		Named named;
 		Method method;
-		Router(PathParser parser, PathParserNext parser_next, Named named, Method method) : parser{parser}, parser_next{parser_next}, named{named}, method{method} {}
+		Fallback fallback;
+		Router(PathParser parser, PathParserNext parser_next, Always always, Named named, Method method, Fallback fallback) : parser{parser}, parser_next{parser_next}, always{always}, named{named}, method{method}, fallback{fallback} {}
 		template<class...>
 		friend auto create_router(build::router_c auto router);
 
 	public:
 		// valid server callback
-		asio::awaitable<bool> operator()(Request &request, const size_t path_progress = 1, PreviouslyParsedParts... parts) const {
+		async operator()(Request &request, Response &response, const size_t path_progress = 1, PreviouslyParsedParts... parts) const {
+			co_await detail::for_each_awaitable(always, [&]<class A>(A &always_handler) -> awaitable<bool> {
+				if constexpr (std::is_void_v<std::invoke_result_t<A, Req, Res, PreviouslyParsedParts...>>) always_handler(request, response, parts...);
+				else
+					co_await detail::to_awaitable(always_handler(request, response, parts...));
+				co_return response.body_sent; // continue iterating
+			});
+			if (response.body_sent) co_return;
 			// reached the end of the url?
 			if (request.path.size() <= path_progress || (path_progress == request.path.size() - 1 && request.path.back() == '/')) {
 				// method handlers
-				co_return co_await detail::for_each_awaitable(method, [&](auto &method_handler) -> asio::awaitable<bool> {
+				co_await detail::for_each_awaitable(method, [&](auto &method_handler) -> awaitable<bool> {
 					if (method_handler.first == request.method) {
-						if constexpr (std::is_void_v<std::invoke_result_t<decltype(method_handler.second), decltype(request), decltype(parts)...>>) {
-							method_handler.second(request, parts...);
-						} else {
-							co_await method_handler.second(request, parts...);
-						}
-						co_return true; // found the correct method handler, stop iterating and don't continue
+						if constexpr (std::is_void_v<std::invoke_result_t<decltype(method_handler.second), Req, Res, PreviouslyParsedParts...>>) method_handler.second(request, response, parts...);
+						else
+							co_await detail::to_awaitable(method_handler.second(request, response, parts...));
+						co_return response.body_sent; // replied, stop iterating and don't continue
 					}
 					co_return false; // continue over method handlers
 				});
+				if (response.body_sent) co_return;
 			}
-			size_t slash = request.path.find('/', path_progress);
-			if (slash == std::string_view::npos) slash = request.path.size();
-			std::string_view path_part = std::string_view{request.path}.substr(path_progress, slash - path_progress);
-			if (co_await detail::for_each_awaitable(named, [&](auto &named_handler) -> asio::awaitable<bool> {
-					if (named_handler.first == path_part) {
-						co_await named_handler.second(request, slash + 1, parts...);
-						co_return true; // found it, stop iterating and don't continue to the any-parser
-					}
-					co_return false; // continue iterating
-				})) co_return true;	 // if we found a name handler, we're done
+			std::string_view path_part{};
+			size_t slash = request.path.size();
+			if (path_progress <= request.path.size()) {
+				slash = request.path.find('/', path_progress);
+				if (slash == std::string_view::npos) slash = request.path.size();
+				path_part = std::string_view{request.path}.substr(path_progress, slash - path_progress);
+			}
+			co_await detail::for_each_awaitable(named, [&](auto &named_handler) -> awaitable<bool> {
+				if (named_handler.first == path_part) {
+					co_await detail::to_awaitable(named_handler.second(request, response, slash + 1, parts...));
+					co_return response.body_sent; // replied, stop iterating and don't continue
+				}
+				co_return false; // continue iterating
+			});
+			if (response.body_sent) co_return;
 			if constexpr (std::is_same_v<PathParser, std::monostate>) {
-				co_return false;
 			} else if constexpr (path_parser_with_early<PathParser>) {
-				if (auto result = parser(path_part, request); result.has_value())
-					co_await parser_next(request, slash + 1, parts..., result.value());
-				co_return true;
+				if (auto result = co_await detail::to_awaitable(parser(path_part, request, response)); result.has_value())
+					co_await parser_next(request, response, slash + 1, parts..., result.value());
+				if (response.body_sent) co_return;
 			} else {
-				co_await parser_next(request, slash + 1, parts..., parser(path_part));
-				co_return true;
+				co_await parser_next(request, response, slash + 1, parts..., co_await detail::to_awaitable(parser(path_part)));
+				if (response.body_sent) co_return;
 			}
+
+			co_await detail::for_each_awaitable(fallback, [&]<class F>(F fallback_handler) -> awaitable<bool> {
+				if constexpr (std::is_void_v<std::invoke_result_t<F, Req, Res, PreviouslyParsedParts...>>) fallback_handler(request, response, parts...);
+				else
+					co_await detail::to_awaitable(fallback_handler(request, response, parts...));
+				co_return response.body_sent;
+			});
+			co_return;
 		}
 	};
 
@@ -406,9 +493,6 @@ namespace ewhttp {
 		using router_t = decltype(router);
 		static_assert(routes<router_t, std::tuple<PrevParsedParts...>>);
 		using routes_type = typename router_t::routes_type;
-		//auto numbers = detail::filter_map<EWHTTP_CONCEPT_LAMBDA(detail::first_string_view)>(std::tuple{1, 2, std::pair{"hi", "heyyy"}, 3, 4}, [](std::pair<std::string_view, std::string_view> pair) {
-		//	return std::make_pair(pair.first, pair.second.substr(0, 4));
-		//});
 
 		auto [parser, parsed_router] = [&] {
 			if constexpr (detail::Count<EWHTTP_CONCEPT_LAMBDA(build::parser_c), routes_type>::value == 1) {
@@ -425,6 +509,16 @@ namespace ewhttp {
 		using parsed_router_t = decltype(parsed_router);
 		static_assert(optional_path_parser<parser_t>);
 		static_assert(detail::optional_parser_router<decltype(parsed_router), decltype(parser), PrevParsedParts...>);
+		auto always = detail::filter_map<EWHTTP_CONCEPT_LAMBDA(build::always_c)>(router.routes, [](build::always_c auto always) {
+			return always.handler;
+		});
+		using always_t = decltype(always);
+		static_assert(detail::handler_tuple<always_t, std::tuple<PrevParsedParts...>>);
+		auto fallback = detail::filter_map<EWHTTP_CONCEPT_LAMBDA(build::fallback_c)>(router.routes, [](build::fallback_c auto fallback) {
+			return fallback.handler;
+		});
+		using fallback_t = decltype(fallback);
+		static_assert(detail::handler_tuple<fallback_t, std::tuple<PrevParsedParts...>>);
 		auto named = detail::filter_map<EWHTTP_CONCEPT_LAMBDA(build::name_c)>(router.routes, []<class... Routes>(build::Name<Routes...> pair) {
 			return std::make_pair(pair.name, create_router<PrevParsedParts...>(pair.routes));
 		});
@@ -438,12 +532,12 @@ namespace ewhttp {
 			return std::make_pair(handler.method, handler.handler);
 		});
 		using method_t = decltype(method);
-		static_assert(detail::handler_tuple<method_t, std::tuple<PrevParsedParts...>>);
+		static_assert(detail::method_handler_tuple<method_t, std::tuple<PrevParsedParts...>>);
 		//return std::tuple_cat(std::conditional_t<(std::is_same_v<std::tuple_element_t<0, T>, Method>),
 		//										 std::tuple<T>,
 		//										 std::tuple<>>{}...);
 
-		return Router<parser_t, parsed_router_t, named_t, method_t, PrevParsedParts...>(parser, parsed_router, named, method);
+		return Router<parser_t, parsed_router_t, always_t, named_t, method_t, fallback_t, PrevParsedParts...>(parser, parsed_router, always, named, method, fallback);
 	}
 	template<class... PrevParsedParts>
 	auto create_router(build::route_c auto... routes) {

@@ -1,28 +1,27 @@
 #pragma once
 #include "./request.h"
+#include "./response.h"
 #include <asio.hpp>
 #include <functional>
 
 namespace ewhttp {
-
-	using ServerCallback = std::function<asio::awaitable<bool>(Request &)>;
+	using server_callback = std::function<async(Request &, Response &)>;
 
 	template<class T>
-	concept server_callback = requires(T t) {
-		ServerCallback{t};
+	concept server_callback_c = requires(T t) {
+		server_callback{t};
 	};
 
 	class Server {
-		ServerCallback callback;
+		server_callback callback;
 		asio::io_context io_context{1};
 		asio::any_io_executor io_executor{};
 
 	public:
-		template<server_callback Callback>
+		template<server_callback_c Callback>
 		explicit Server(const Callback &callback) : callback{callback} {}
-		Server(const Server &) = delete;
-
 		~Server() = default;
+
 		/**
 		 * \brief Start the server on the given host and port.
 		 * \param host The host to listen on.
@@ -73,18 +72,18 @@ namespace ewhttp {
 		}
 
 	private:
-		asio::awaitable<void> respond(asio::ip::tcp::socket);
+		async respond(asio::ip::tcp::socket);
 	};
 
 	namespace detail {
 		struct RequestContext {
 			Request request;
-			ServerCallback &callback;
+			server_callback &callback;
 			std::string method{};
 			asio::ip::tcp::socket socket;
 			asio::any_io_executor &executor;
 
-			RequestContext(const Request &request, ServerCallback &callback, std::string method, asio::ip::tcp::socket socket, asio::any_io_executor &executor) : request{request}, callback{callback}, method{std::move(method)}, socket{std::move(socket)}, executor{executor} {}
+			RequestContext(const Request &request, server_callback &callback, std::string method, asio::ip::tcp::socket socket, asio::any_io_executor &executor) : request{request}, callback{callback}, method{std::move(method)}, socket{std::move(socket)}, executor{executor} {}
 		};
 	} // namespace detail
 } // namespace ewhttp
