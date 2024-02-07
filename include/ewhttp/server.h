@@ -23,7 +23,7 @@ namespace ewhttp {
 		~Server() = default;
 
 		/**
-		 * \brief Run the server on the given host and port.
+		 * \brief Run the server on the given host and port. Blocks until the server is stopped.
 		 * \param host The host to listen on.
 		 * \param port The port number to listen on.
 		 */

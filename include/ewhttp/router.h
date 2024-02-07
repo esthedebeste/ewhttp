@@ -143,7 +143,7 @@ namespace ewhttp {
 		struct Router {
 			using routes_type = std::tuple<Routes...>;
 			std::tuple<Routes...> routes;
-			explicit Router(Routes... routes) : routes(std::make_tuple(routes...)) {}
+			explicit constexpr Router(Routes... routes) : routes(std::make_tuple(routes...)) {}
 		};
 		template<path_parser P, route_c... R>
 		struct Parser {
@@ -151,7 +151,7 @@ namespace ewhttp {
 			using routes_type = Router<R...>;
 			P parser;
 			Router<R...> routes;
-			explicit Parser(P parser, R... routes) : parser(parser), routes(Router{routes...}) {}
+			explicit constexpr Parser(P parser, R... routes) : parser(parser), routes(Router{routes...}) {}
 		};
 		template<path_parser P, route_c... Rs>
 		Parser(P, Rs...) -> Parser<P, Rs...>;
@@ -160,7 +160,7 @@ namespace ewhttp {
 			using routes_type = Router<R...>;
 			std::string_view name;
 			Router<R...> routes;
-			explicit Name(const std::string_view name, R... routes) : name(name), routes(Router{routes...}) {}
+			explicit constexpr Name(const std::string_view name, R... routes) : name(name), routes(Router{routes...}) {}
 		};
 		template<route_c... Rs>
 		Name(const std::string_view, Rs...) -> Name<Rs...>;
@@ -169,14 +169,14 @@ namespace ewhttp {
 			static constexpr bool is_always = true;
 			using handler_type = H;
 			H handler;
-			explicit Always(H handler) : handler{handler} {}
+			explicit constexpr Always(H handler) : handler{handler} {}
 		};
 		template<class H>
 		struct Fallback {
 			static constexpr bool is_fallback = true;
 			using handler_type = H;
 			H handler;
-			explicit Fallback(H handler) : handler{handler} {}
+			explicit constexpr Fallback(H handler) : handler{handler} {}
 		};
 
 		template<class H>
@@ -184,30 +184,30 @@ namespace ewhttp {
 			using handler_type = H;
 			MethodT method;
 			H handler;
-			Handler(const MethodT &method, H handler) : method(method), handler(handler) {}
+			constexpr Handler(const MethodT &method, H handler) : method(method), handler(handler) {}
 		};
 
 		namespace handlers_only {
 			template<class H>
-			Handler<H> GET(H handler) { return Handler{Method::GET, handler}; }
+			constexpr Handler<H> GET(H handler) { return Handler{Method::GET, handler}; }
 			template<class H>
-			Handler<H> HEAD(H handler) { return Handler{Method::HEAD, handler}; }
+			constexpr Handler<H> HEAD(H handler) { return Handler{Method::HEAD, handler}; }
 			template<class H>
-			Handler<H> POST(H handler) { return Handler{Method::POST, handler}; }
+			constexpr Handler<H> POST(H handler) { return Handler{Method::POST, handler}; }
 			template<class H>
-			Handler<H> PUT(H handler) { return Handler{Method::PUT, handler}; }
+			constexpr Handler<H> PUT(H handler) { return Handler{Method::PUT, handler}; }
 // windows
 #undef DELETE
 			template<class H>
-			Handler<H> DELETE(H handler) { return Handler{Method::DELETE, handler}; }
+			constexpr Handler<H> DELETE(H handler) { return Handler{Method::DELETE, handler}; }
 			template<class H>
-			Handler<H> CONNECT(H handler) { return Handler{Method::CONNECT, handler}; }
+			constexpr Handler<H> CONNECT(H handler) { return Handler{Method::CONNECT, handler}; }
 			template<class H>
-			Handler<H> OPTIONS(H handler) { return Handler{Method::OPTIONS, handler}; }
+			constexpr Handler<H> OPTIONS(H handler) { return Handler{Method::OPTIONS, handler}; }
 			template<class H>
-			Handler<H> TRACE(H handler) { return Handler{Method::TRACE, handler}; }
+			constexpr Handler<H> TRACE(H handler) { return Handler{Method::TRACE, handler}; }
 			template<class H>
-			Handler<H> PATCH(H handler) { return Handler{Method::PATCH, handler}; }
+			constexpr Handler<H> PATCH(H handler) { return Handler{Method::PATCH, handler}; }
 		} // namespace handlers_only
 		namespace handlers {
 			using namespace handlers_only;
@@ -216,27 +216,27 @@ namespace ewhttp {
 
 		struct BuildShortener {
 			template<route_c... R>
-			Router<R...> operator()(R... routes) const {
+			constexpr Router<R...> operator()(R... routes) const {
 				return Router<R...>{routes...};
 			}
 			template<path_parser P, route_c... R>
-			Parser<P, R...> operator()(P parser, R... routes) const {
+			constexpr Parser<P, R...> operator()(P parser, R... routes) const {
 				return Parser<P, R...>{parser, routes...};
 			}
 			template<route_c... R>
-			Name<R...> operator()(const std::string_view name, R... routes) const {
+			constexpr Name<R...> operator()(const std::string_view name, R... routes) const {
 				return Name<R...>{name, routes...};
 			}
 			template<class H>
-			Always<H> operator()(H handler) const {
+			constexpr Always<H> operator()(H handler) const {
 				return Always<H>{handler};
 			}
 			template<class H>
-			Fallback<H> fallback(H handler) const {
+			constexpr Fallback<H> fallback(H handler) const {
 				return Fallback<H>{handler};
 			}
 			template<class H>
-			Handler<H> operator()(const MethodT &method, H handler) const {
+			constexpr Handler<H> operator()(const MethodT &method, H handler) const {
 				return Handler<H>{method, handler};
 			}
 		};
@@ -244,7 +244,7 @@ namespace ewhttp {
 			constexpr BuildShortener _{};
 			using namespace handlers;
 		} // namespace underscore
-	}	  // namespace build
+	} // namespace build
 
 	template<class H, class PartsTuple>
 	concept handler = detail::HandlerVerifier<H, PartsTuple>::value;
@@ -373,7 +373,7 @@ namespace ewhttp {
 		}
 
 		template<auto Filter>
-		auto filter_map(auto tup, auto map) {
+		constexpr auto filter_map(auto tup, auto map) {
 			if constexpr (std::tuple_size_v<decltype(tup)> == 0) {
 				return std::make_tuple();
 			}
@@ -428,9 +428,9 @@ namespace ewhttp {
 		Named named;
 		Method method;
 		Fallback fallback;
-		Router(PathParser parser, PathParserNext parser_next, Always always, Named named, Method method, Fallback fallback) : parser{parser}, parser_next{parser_next}, always{always}, named{named}, method{method}, fallback{fallback} {}
+		constexpr Router(PathParser parser, PathParserNext parser_next, Always always, Named named, Method method, Fallback fallback) : parser{parser}, parser_next{parser_next}, always{always}, named{named}, method{method}, fallback{fallback} {}
 		template<class...>
-		friend auto create_router(build::router_c auto router);
+		friend constexpr auto create_router(build::router_c auto router);
 
 	public:
 		// valid server callback
@@ -492,7 +492,7 @@ namespace ewhttp {
 	};
 
 	template<class... PrevParsedParts>
-	auto create_router(build::router_c auto router) {
+	constexpr auto create_router(build::router_c auto router) {
 		using router_t = decltype(router);
 		static_assert(routes<router_t, std::tuple<PrevParsedParts...>>);
 		using routes_type = typename router_t::routes_type;
@@ -536,7 +536,7 @@ namespace ewhttp {
 		return Router<parser_t, parsed_router_t, always_t, named_t, method_t, fallback_t, PrevParsedParts...>(parser, parsed_router, always, named, method, fallback);
 	}
 	template<class... PrevParsedParts>
-	auto create_router(build::route_c auto... routes) {
+	constexpr auto create_router(build::route_c auto... routes) {
 		return create_router<PrevParsedParts...>(build::Router{routes...});
 	}
 } // namespace ewhttp
