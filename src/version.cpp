@@ -2,6 +2,6 @@
 
 namespace ewhttp {
 	int version() {
-		return 00'00'00;
+		return 00'00'01;
 	}
 } // namespace ewhttp

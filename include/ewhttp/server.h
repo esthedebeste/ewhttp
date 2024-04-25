@@ -7,27 +7,21 @@
 namespace ewhttp {
 	using server_callback = std::function<async(Request &, Response &)>;
 
-	template<class T>
-	concept server_callback_c = requires(T t) {
-		server_callback{t};
-	};
-
 	class Server {
 		server_callback callback;
 		asio::io_context io_context{1};
 		asio::any_io_executor io_executor{};
 
 	public:
-		template<server_callback_c Callback>
-		explicit Server(const Callback &callback) : callback{callback} {}
+		explicit Server(server_callback callback) : callback{std::move(callback)} {}
 		~Server() = default;
 
 		/**
-		 * \brief Run the server on the given host and port.
+		 * \brief Run the server on the given host and port. Blocks until the server is stopped.
 		 * \param host The host to listen on.
 		 * \param port The port number to listen on.
 		 */
-		void run(const asio::ip::address &host, uint16_t port);
+		void run(const asio::ip::address host, uint16_t port);
 		/**
 		 * \brief Run the server on the given host and port.
 		 * \param host Must be an IP string.

@@ -1,4 +1,5 @@
 #pragma once
+#include "./files.h"
 #include "./request.h"
 #include "./response.h"
 
@@ -23,9 +24,13 @@ namespace ewhttp {
 		struct HandlerVerifier;
 		template<class Handler, class... Parts>
 		struct HandlerVerifier<Handler, std::tuple<Parts...>> {
-			static constexpr bool value = requires(Handler h, Request &request, Response &response, Parts... parts) {
-				h(request, response, parts...);
+			static constexpr bool fallback = requires(Handler h, Request &request, Response &response, Parts... parts) {
+				h(request, response, parts...); // fallback
 			};
+			static constexpr bool subrouter = requires(Handler h, Request &request, Response &response, const size_t path_progress, Parts... parts) {
+				h(request, response, path_progress, parts...); // subrouter
+			};
+			static constexpr bool value = fallback || subrouter;
 		};
 
 		template<class Tuple>
@@ -143,7 +148,7 @@ namespace ewhttp {
 		struct Router {
 			using routes_type = std::tuple<Routes...>;
 			std::tuple<Routes...> routes;
-			explicit Router(Routes... routes) : routes(std::make_tuple(routes...)) {}
+			explicit constexpr Router(Routes... routes) : routes(std::make_tuple(routes...)) {}
 		};
 		template<path_parser P, route_c... R>
 		struct Parser {
@@ -151,7 +156,7 @@ namespace ewhttp {
 			using routes_type = Router<R...>;
 			P parser;
 			Router<R...> routes;
-			explicit Parser(P parser, R... routes) : parser(parser), routes(Router{routes...}) {}
+			explicit constexpr Parser(P parser, R... routes) : parser(parser), routes(Router{routes...}) {}
 		};
 		template<path_parser P, route_c... Rs>
 		Parser(P, Rs...) -> Parser<P, Rs...>;
@@ -160,7 +165,7 @@ namespace ewhttp {
 			using routes_type = Router<R...>;
 			std::string_view name;
 			Router<R...> routes;
-			explicit Name(const std::string_view name, R... routes) : name(name), routes(Router{routes...}) {}
+			explicit constexpr Name(const std::string_view name, R... routes) : name(name), routes(Router{routes...}) {}
 		};
 		template<route_c... Rs>
 		Name(const std::string_view, Rs...) -> Name<Rs...>;
@@ -169,14 +174,14 @@ namespace ewhttp {
 			static constexpr bool is_always = true;
 			using handler_type = H;
 			H handler;
-			explicit Always(H handler) : handler{handler} {}
+			explicit constexpr Always(H handler) : handler{handler} {}
 		};
 		template<class H>
 		struct Fallback {
 			static constexpr bool is_fallback = true;
 			using handler_type = H;
 			H handler;
-			explicit Fallback(H handler) : handler{handler} {}
+			explicit constexpr Fallback(H handler) : handler{handler} {}
 		};
 
 		template<class H>
@@ -184,30 +189,30 @@ namespace ewhttp {
 			using handler_type = H;
 			MethodT method;
 			H handler;
-			Handler(const MethodT &method, H handler) : method(method), handler(handler) {}
+			constexpr Handler(const MethodT &method, H handler) : method(method), handler(handler) {}
 		};
 
 		namespace handlers_only {
 			template<class H>
-			Handler<H> GET(H handler) { return Handler{Method::GET, handler}; }
+			constexpr Handler<H> GET(H handler) { return Handler{Method::GET, handler}; }
 			template<class H>
-			Handler<H> HEAD(H handler) { return Handler{Method::HEAD, handler}; }
+			constexpr Handler<H> HEAD(H handler) { return Handler{Method::HEAD, handler}; }
 			template<class H>
-			Handler<H> POST(H handler) { return Handler{Method::POST, handler}; }
+			constexpr Handler<H> POST(H handler) { return Handler{Method::POST, handler}; }
 			template<class H>
-			Handler<H> PUT(H handler) { return Handler{Method::PUT, handler}; }
+			constexpr Handler<H> PUT(H handler) { return Handler{Method::PUT, handler}; }
 // windows
 #undef DELETE
 			template<class H>
-			Handler<H> DELETE(H handler) { return Handler{Method::DELETE, handler}; }
+			constexpr Handler<H> DELETE(H handler) { return Handler{Method::DELETE, handler}; }
 			template<class H>
-			Handler<H> CONNECT(H handler) { return Handler{Method::CONNECT, handler}; }
+			constexpr Handler<H> CONNECT(H handler) { return Handler{Method::CONNECT, handler}; }
 			template<class H>
-			Handler<H> OPTIONS(H handler) { return Handler{Method::OPTIONS, handler}; }
+			constexpr Handler<H> OPTIONS(H handler) { return Handler{Method::OPTIONS, handler}; }
 			template<class H>
-			Handler<H> TRACE(H handler) { return Handler{Method::TRACE, handler}; }
+			constexpr Handler<H> TRACE(H handler) { return Handler{Method::TRACE, handler}; }
 			template<class H>
-			Handler<H> PATCH(H handler) { return Handler{Method::PATCH, handler}; }
+			constexpr Handler<H> PATCH(H handler) { return Handler{Method::PATCH, handler}; }
 		} // namespace handlers_only
 		namespace handlers {
 			using namespace handlers_only;
@@ -216,27 +221,30 @@ namespace ewhttp {
 
 		struct BuildShortener {
 			template<route_c... R>
-			Router<R...> operator()(R... routes) const {
+			constexpr Router<R...> operator()(R... routes) const {
 				return Router<R...>{routes...};
 			}
 			template<path_parser P, route_c... R>
-			Parser<P, R...> operator()(P parser, R... routes) const {
+			constexpr Parser<P, R...> operator()(P parser, R... routes) const {
 				return Parser<P, R...>{parser, routes...};
 			}
 			template<route_c... R>
-			Name<R...> operator()(const std::string_view name, R... routes) const {
+			constexpr Name<R...> operator()(const std::string_view name, R... routes) const {
 				return Name<R...>{name, routes...};
 			}
 			template<class H>
-			Always<H> operator()(H handler) const {
+			constexpr Always<H> operator()(H handler) const {
 				return Always<H>{handler};
 			}
+			Fallback<Files> files(std::string_view path_to_root, const FilesOptions &options = {}) const {
+				return Fallback<Files>{Files{path_to_root, options}};
+			}
 			template<class H>
-			Fallback<H> fallback(H handler) const {
+			constexpr Fallback<H> fallback(H handler) const {
 				return Fallback<H>{handler};
 			}
 			template<class H>
-			Handler<H> operator()(const MethodT &method, H handler) const {
+			constexpr Handler<H> operator()(const MethodT &method, H handler) const {
 				return Handler<H>{method, handler};
 			}
 		};
@@ -317,14 +325,32 @@ namespace ewhttp {
 		 * \return `true` if callback broke, `false` if continued past the end
 		 */
 		template<class... Elements>
-		async for_each_awaitable(const std::tuple<Elements...> tuple, auto callback) {
-			co_await std::apply([callback]<class... T>(T &&...element) -> async {
+		awaitable<bool> for_each_awaitable(const std::tuple<Elements...> tuple, auto callback) {
+			bool result = co_await std::apply([callback]<class... T>(T &&...element) -> awaitable<bool> {
 				bool done = false;
 				((done || ((done = co_await callback(element)))), ...);
+				co_return done;
 				// optimizer should convert a series of `if(!done)`s to early returns instead of constantly reevaluating the same condition. also these lambdas should all be inlined later.
 			},
-								tuple);
-			co_return;
+											  tuple);
+			co_return result;
+		}
+
+		/**
+		 * \brief Iterate over a tuple.
+		 * \param tuple Tuple of elements to iterate over
+		 * \param callback Returns `true` to break, `false` to continue
+		 * \return `true` if callback broke, `false` if continued past the end
+		 */
+		template<class... Elements>
+		bool for_each(const std::tuple<Elements...> tuple, auto callback) {
+			return std::apply([callback]<class... T>(T &&...element) -> bool {
+				bool done = false;
+				((done || ((done = callback(element)))), ...);
+				return done;
+				// optimizer should convert a series of `if(!done)`s to early returns instead of constantly reevaluating the same condition. also these lambdas should all be inlined later.
+			},
+							  tuple);
 		}
 
 		template<typename T>
@@ -373,7 +399,7 @@ namespace ewhttp {
 		}
 
 		template<auto Filter>
-		auto filter_map(auto tup, auto map) {
+		constexpr auto filter_map(auto tup, auto map) {
 			if constexpr (std::tuple_size_v<decltype(tup)> == 0) {
 				return std::make_tuple();
 			}
@@ -428,63 +454,72 @@ namespace ewhttp {
 		Named named;
 		Method method;
 		Fallback fallback;
-		Router(PathParser parser, PathParserNext parser_next, Always always, Named named, Method method, Fallback fallback) : parser{parser}, parser_next{parser_next}, always{always}, named{named}, method{method}, fallback{fallback} {}
+		constexpr Router(PathParser parser, PathParserNext parser_next, Always always, Named named, Method method, Fallback fallback) : parser{parser}, parser_next{parser_next}, always{always}, named{named}, method{method}, fallback{fallback} {}
 		template<class...>
-		friend auto create_router(build::router_c auto router);
+		friend constexpr auto create_router(build::router_c auto router);
 
 	public:
 		// valid server callback
 		async operator()(Request &request, Response &response, const size_t path_progress = 1, PreviouslyParsedParts... parts) const {
-			co_await detail::for_each_awaitable(always, [&]<class A>(A &always_handler) -> awaitable<bool> {
-				if constexpr (std::is_void_v<std::invoke_result_t<A, Req, Res, PreviouslyParsedParts...>>) always_handler(request, response, parts...);
-				else
-					co_await detail::to_awaitable(always_handler(request, response, parts...));
-				co_return response.body_sent; // continue iterating
-			});
-			if (response.body_sent) co_return;
+			if (co_await detail::for_each_awaitable(always, [&]<class A>(A &always_handler) -> awaitable<bool> {
+					if constexpr (std::is_void_v<std::invoke_result_t<A, Req, Res, PreviouslyParsedParts...>>) {
+						always_handler(request, response, parts...);
+					} else {
+						co_await detail::to_awaitable(always_handler(request, response, parts...));
+					}
+					co_return response.body_sent; // continue iterating
+				})) co_return;
 			// reached the end of the url?
 			if (request.path.size() <= path_progress || (path_progress == request.path.size() - 1 && request.path.back() == '/')) {
 				// method handlers
-				co_await detail::for_each_awaitable(method, [&](auto &method_handler) -> awaitable<bool> {
-					if (method_handler.first == request.method) {
-						if constexpr (std::is_void_v<std::invoke_result_t<decltype(method_handler.second), Req, Res, PreviouslyParsedParts...>>) method_handler.second(request, response, parts...);
-						else
-							co_await detail::to_awaitable(method_handler.second(request, response, parts...));
-						co_return response.body_sent; // replied, stop iterating and don't continue
-					}
-					co_return false; // continue over method handlers
-				});
-				if (response.body_sent) co_return;
+				if (co_await detail::for_each_awaitable(method, [&](auto &method_handler) -> awaitable<bool> {
+						if (method_handler.first == request.method) {
+							if constexpr (std::is_void_v<std::invoke_result_t<decltype(method_handler.second), Req, Res, PreviouslyParsedParts...>>) method_handler.second(request, response, parts...);
+							else
+								co_await detail::to_awaitable(method_handler.second(request, response, parts...));
+							co_return response.body_sent; // replied, stop iterating and don't continue
+						}
+						co_return false; // continue over method handlers
+					})) co_return;
 			}
 			std::string_view path_part{};
-			size_t slash = request.path.size();
+			size_t postslash = request.path.size();
 			if (path_progress <= request.path.size()) {
-				slash = request.path.find('/', path_progress);
-				if (slash == std::string_view::npos) slash = request.path.size();
-				path_part = std::string_view{request.path}.substr(path_progress, slash - path_progress);
+				auto preslash = request.path.find('/', path_progress);
+				if (preslash == std::string_view::npos) preslash = postslash = request.path.size();
+				else
+					postslash = preslash + 1;
+				path_part = std::string_view{request.path}.substr(path_progress, preslash - path_progress);
 			}
-			co_await detail::for_each_awaitable(named, [&](auto &named_handler) -> awaitable<bool> {
-				if (named_handler.first == path_part) {
-					co_await detail::to_awaitable(named_handler.second(request, response, slash + 1, parts...));
-					co_return response.body_sent; // replied, stop iterating and don't continue
-				}
-				co_return false; // continue iterating
-			});
-			if (response.body_sent) co_return;
+			if (co_await detail::for_each_awaitable(named, [&](auto &named_handler) -> awaitable<bool> {
+					if (named_handler.first == path_part) {
+						co_await detail::to_awaitable(named_handler.second(request, response, postslash, parts...));
+						co_return response.body_sent; // replied, stop iterating and don't continue
+					}
+					co_return false; // continue iterating
+				})) co_return;
 			if constexpr (std::is_same_v<PathParser, std::nullopt_t>) {
 			} else if constexpr (path_parser_with_early<PathParser>) {
 				if (auto result = co_await detail::to_awaitable(parser(path_part, request, response)); result.has_value())
-					co_await parser_next(request, response, slash + 1, parts..., result.value());
+					co_await parser_next(request, response, postslash, parts..., result.value());
 				if (response.body_sent) co_return;
 			} else {
-				co_await parser_next(request, response, slash + 1, parts..., co_await detail::to_awaitable(parser(path_part)));
+				co_await parser_next(request, response, postslash, parts..., co_await detail::to_awaitable(parser(path_part)));
 				if (response.body_sent) co_return;
 			}
 
 			co_await detail::for_each_awaitable(fallback, [&]<class F>(F fallback_handler) -> awaitable<bool> {
-				if constexpr (std::is_void_v<std::invoke_result_t<F, Req, Res, PreviouslyParsedParts...>>) fallback_handler(request, response, parts...);
-				else
-					co_await detail::to_awaitable(fallback_handler(request, response, parts...));
+				if constexpr (detail::HandlerVerifier<F, std::tuple<PreviouslyParsedParts...>>::subrouter) {
+					if constexpr (std::is_void_v<std::invoke_result_t<F, Req, Res, const size_t, PreviouslyParsedParts...>>)
+						fallback_handler(request, response, path_progress, parts...);
+					else
+						co_await detail::to_awaitable(fallback_handler(request, response, path_progress, parts...));
+				} else {
+					if constexpr (std::is_void_v<std::invoke_result_t<F, Req, Res, PreviouslyParsedParts...>>)
+						fallback_handler(request, response, parts...);
+					else
+						co_await detail::to_awaitable(fallback_handler(request, response, parts...));
+				}
 				co_return response.body_sent;
 			});
 			co_return;
@@ -492,7 +527,7 @@ namespace ewhttp {
 	};
 
 	template<class... PrevParsedParts>
-	auto create_router(build::router_c auto router) {
+	constexpr auto create_router(build::router_c auto router) {
 		using router_t = decltype(router);
 		static_assert(routes<router_t, std::tuple<PrevParsedParts...>>);
 		using routes_type = typename router_t::routes_type;
@@ -536,7 +571,7 @@ namespace ewhttp {
 		return Router<parser_t, parsed_router_t, always_t, named_t, method_t, fallback_t, PrevParsedParts...>(parser, parsed_router, always, named, method, fallback);
 	}
 	template<class... PrevParsedParts>
-	auto create_router(build::route_c auto... routes) {
+	constexpr auto create_router(build::route_c auto... routes) {
 		return create_router<PrevParsedParts...>(build::Router{routes...});
 	}
 } // namespace ewhttp
